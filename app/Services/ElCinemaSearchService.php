@@ -8,50 +8,124 @@ use RuntimeException;
 
 class ElCinemaSearchService
 {
-    public function search(string $q): array
-    {
-        $url = 'https://elcinema.com/search/?q=' . urlencode($q);
+    public function search(string $q)
+{
+    $cookieJar = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'elcinema_cookiejar.txt';
 
-        [$status, $html] = $this->curlGet($url);
-        dd([$status, $html] );
-        // If blocked, return empty (or throw)
-        if ($status !== 200 || !$html) {
-            // You can log this instead of throwing:
-            // logger()->warning('ElCinema blocked request', ['status' => $status, 'url' => $url, 'body' => mb_substr($html ?? '', 0, 300)]);
-            return [];
-            // or:
-            // throw new RuntimeException("ElCinema request failed. HTTP: {$status}");
+    $commonOpts = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS      => 5,
+        CURLOPT_TIMEOUT        => 20,
+        CURLOPT_ENCODING       => '',
+
+        // Persist cookies across requests
+        CURLOPT_COOKIEJAR      => $cookieJar,
+        CURLOPT_COOKIEFILE     => $cookieJar,
+
+        // Browser-like headers
+        CURLOPT_USERAGENT      => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        CURLOPT_HTTPHEADER     => [
+            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language: ar,en-US;q=0.9,en;q=0.8',
+            'Connection: keep-alive',
+        ],
+    ];
+
+    // 1) Warm up: visit homepage to get cookies/session
+    $ch = curl_init('https://elcinema.com/');
+    curl_setopt_array($ch, $commonOpts);
+    $home = curl_exec($ch);
+
+    if (curl_errno($ch)) {
+        $err = curl_error($ch);
+        curl_close($ch);
+        return "cURL Error (warmup): $err";
+    }
+
+    // 2) Now call search with same cookies + referer
+    $url = 'https://elcinema.com/search/?q=' . rawurlencode($q);
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array_merge($commonOpts[CURLOPT_HTTPHEADER], [
+        'Referer: https://elcinema.com/',
+        'Upgrade-Insecure-Requests: 1',
+    ]));
+
+    $response = curl_exec($ch);
+    $info = curl_getinfo($ch);
+    $errno = curl_errno($ch);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    if ($errno) {
+        return "cURL Error (search): $error";
+    }
+
+    if (($info['http_code'] ?? 0) >= 400) {
+        return "HTTP {$info['http_code']} from {$info['url']}\n\n" . $response;
+    }
+
+    //return ($response);
+    return $this->parseElcinemaResults($response);
+}
+
+public function parseElcinemaResults(string $html): array
+{
+    libxml_use_internal_errors(true);
+
+    $dom = new DOMDocument();
+    $dom->loadHTML($html);
+
+    $xpath = new DOMXPath($dom);
+
+    // Get all main <li> inside the results grid
+    $items = $xpath->query(
+        "//ul[contains(@class,'small-block-grid-2') 
+            and contains(@class,'medium-block-grid-3') 
+            and contains(@class,'large-block-grid-6')]/li"
+    );
+
+    $results = [];
+
+    foreach ($items as $li) {
+
+        // image (data-src OR src)
+        $imgNode = $xpath->query(".//div[contains(@class,'thumbnail-wrapper')]//img", $li)->item(0);
+        $img = null;
+
+        if ($imgNode) {
+            $img = $imgNode->getAttribute("data-src") ?: $imgNode->getAttribute("src");
         }
 
-        libxml_use_internal_errors(true);
-        $dom = new DOMDocument();
-        $dom->loadHTML($html);
-        libxml_clear_errors();
+        // title + link (from the text-center link)
+        $titleNode = $xpath->query(".//ul[contains(@class,'text-center')]//a", $li)->item(0);
 
-        $xpath = new DOMXPath($dom);
+        $title = $titleNode ? trim($titleNode->textContent) : null;
+        $link  = $titleNode ? $titleNode->getAttribute("href") : null;
 
-        $query = "//ul[contains(@class,'small-block-grid-2') and contains(@class,'medium-block-grid-3') and contains(@class,'large-block-grid-6')]//li//ul//li//a";
-        $links = $xpath->query($query);
+        // make link full URL
+        if ($link && str_starts_with($link, "/")) {
+            $link = "https://elcinema.com" . $link;
+        }
 
-        $data = [];
+        // ensure image is full url (it already is usually)
+        if ($img && str_starts_with($img, "/")) {
+            $img = "https://elcinema.com" . $img;
+        }
 
-        foreach ($links as $a) {
-            $title = trim($a->textContent);
-            $href  = trim($a->getAttribute('href'));
-            if ($href === '') continue;
-
-            if (!str_starts_with($href, 'http')) {
-                $href = 'https://elcinema.com' . $href;
-            }
-
-            $data[] = [
-                'title' => $title,
-                'url'   => $href,
+        if ($title && $link) {
+            $results[] = [
+                "title" => $title,
+                "link"  => $link,
+                "image" => $img,
             ];
         }
-
-        return $data;
     }
+
+    return $results;
+}
+
+
 
     /**
      * @return array{0:int,1:string|null}
