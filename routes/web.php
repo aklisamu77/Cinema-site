@@ -13,7 +13,9 @@ Route::get('/about', function () {
 Route::get('/search', function () {
     return view('pages.search');
 });
-  
+Route::get('/movies', function () {
+    return view('pages.movies');
+});
 
 Route::get('/help', function () {
     return view('pages.help');

@@ -65,7 +65,7 @@ class ElCinemaSearchService
         return "HTTP {$info['http_code']} from {$info['url']}\n\n" . $response;
     }
 
-    //return ($response);
+    dd($response);
     return $this->parseElcinemaResults($response);
 }
 

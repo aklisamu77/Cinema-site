@@ -1,15 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>@yield('title', 'My Website')</title>
 
     {{-- CSS --}}
-    @livewireStyles
+    @vite('resources/css/app.css')
 
-    <link rel="stylesheet" href="{{ asset('css/style.css') }}">
+    @livewireStyles
 </head>
+
 <body>
 
     {{-- Navbar --}}
@@ -23,6 +25,6 @@
     {{-- Footer --}}
     @include('partials.footer')
     @livewireScripts
-
 </body>
+
 </html>
